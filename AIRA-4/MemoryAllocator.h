@@ -8,7 +8,7 @@
 #define _MA_ALIGN 8
 
 #ifdef _MA_DEBUG
-#define IF_INITED if(!_isDestroyed){throw std::exception("MA not destroyed (Debug)");}
+#define IF_INITED if(!_isInited){throw std::exception("MA not destroyed (Debug)");}
 #else
 #define IF_INITED 
 #endif
@@ -24,8 +24,11 @@
 class MemoryAllocator
 {
 public:
-	MemoryAllocator();
+	MemoryAllocator() = default;
 	virtual ~MemoryAllocator();
+
+	MemoryAllocator(const MemoryAllocator&) = delete;
+	MemoryAllocator(MemoryAllocator&&) = default;
 	
 	virtual void init();
 	virtual void init(std::size_t initialSize);
@@ -57,7 +60,7 @@ private:
 		std::size_t data_size;
 		void* ptr;
 		CoaHeapPtr() = default;
-		CoaHeapPtr(void* ptr, int data_size) : data_size(data_size), ptr(ptr) {}
+		CoaHeapPtr(void* ptr, std::size_t data_size) : data_size(data_size), ptr(ptr) {}
 	};
 	class CoaHeapPtrLess
 	{

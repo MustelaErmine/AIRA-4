@@ -48,10 +48,12 @@ void MemoryAllocator::free(void* p) {
 	if (p <= (_offset(_fsaBase, _fsaRegionSize()))) {
 		_freeInFSA(p);
 	}
-	if (p <= (_offset(_coalesceBase, _coalesceRegionSize))) {
+	else if (p <= (_offset(_coalesceBase, _coalesceRegionSize))) {
 		_freeInCoalesce(p);
 	}
-	_freeInOS(p);
+	else {
+		_freeInOS(p);
+	}
 }
 
 #ifdef _MA_DEBUG
@@ -70,7 +72,7 @@ void MemoryAllocator::dumpStat() const {
 			busy--;
 			curPtr = _readEmptyFsaBlockNext(curPtr);
 		}
-		std::cout << "Busy: " << busy << " out of " << _fsaBlockAmount << std::endl;
+		std::cout << "Busy or uninited: " << busy << " out of " << _fsaBlockAmount << std::endl;
 	}
 
 	std::cout << "-- Coalesce --" << std::endl;
@@ -83,7 +85,7 @@ void MemoryAllocator::dumpStat() const {
 	std::size_t freeSize = 0;
 	std::size_t freeAmount = 0;
 
-	while (curPtr != _offset(_coalesceBase, _coalesceRegionSize)) {
+	while (curPtr < _offset(_coalesceBase, _coalesceRegionSize)) {
 		std::cout << "- Block " << block_idx << " -" << std::endl;
 		auto block_size = _readCoaBlockSize(curPtr);
 		auto block_busy = _readCoaBlockBusy(curPtr);
@@ -96,6 +98,7 @@ void MemoryAllocator::dumpStat() const {
 			freeSize += block_size;
 			freeAmount++;
 		}
+		curPtr = _offset(curPtr, block_size);
 	}
 
 	std::cout << "Busy size: " << busySize << std::endl;
@@ -115,11 +118,11 @@ void MemoryAllocator::dumpBlocks() const {
 	for (std::size_t i = 0; i < _fsaLength; i++) {
 		std::cout << "- " << _fsaSizes[i] << " section -" << std::endl;
 
-		std::set<void*> busyies = std::set<void*>();
+		std::set<void*> frees = std::set<void*>();
 
 		auto curPtr = _fsaCurPtr[i];
 		while (curPtr != nullptr) {
-			busyies.emplace(curPtr);
+			frees.insert(curPtr);
 			curPtr = _readEmptyFsaBlockNext(curPtr);
 		}
 
@@ -128,11 +131,11 @@ void MemoryAllocator::dumpBlocks() const {
 			auto ptr = _offset(base, j * _fsaSizes[i]);
 			std::cout << "Block " << j << " is ";
 			
-			if (busyies.contains(ptr)) {
-				std::cout << "busy";
+			if (frees.contains(ptr)) {
+				std::cout << "free";
 			}
 			else {
-				std::cout << "free";
+				std::cout << "busy or uninited";
 			}
 			std::cout << std::endl;
 		}
@@ -143,12 +146,13 @@ void MemoryAllocator::dumpBlocks() const {
 	int block_idx = 0;
 	auto curPtr = _coalesceBase;
 	while (curPtr != _offset(_coalesceBase, _coalesceRegionSize)) {
-		std::cout << "- Block " << block_idx << " -" << std::endl;
+		std::cout << "- Block " << block_idx++ << " -" << std::endl;
 		auto block_size = _readCoaBlockSize(curPtr);
 		auto block_busy = _readCoaBlockBusy(curPtr);
 
 		std::cout << "Size: " << block_size << std::endl;
 		std::cout << "Busy: " << std::boolalpha << block_busy << std::endl;
+		curPtr = _offset(curPtr, block_size);
 	}
 
 	std::cout << "--- MemoryAllocator BLOCKS END ---" << std::endl;
@@ -173,6 +177,12 @@ void* MemoryAllocator::_allocInFSA(std::size_t size) {
 
 	auto next = _readEmptyFsaBlockNext(ptr);
 
+	if (next == nullptr) {
+		auto last_ptr = ptr;
+		ptr = nullptr;
+		return last_ptr;
+	}
+
 	auto last_ptr = ptr;
 
 	if (_fsaLastInited[idx] == ptr) {
@@ -182,6 +192,7 @@ void* MemoryAllocator::_allocInFSA(std::size_t size) {
 		else {
 			_assignEmptyFsaBlock(next, _offset(next, block_size));
 		}
+		_fsaLastInited[idx] = next;
 	}
 
 	ptr = next;
@@ -196,12 +207,23 @@ void MemoryAllocator::_freeInFSA(void* p) {
 	ptr = p;
 }
 void* MemoryAllocator::_allocInCoalesce(std::size_t size) {
+	if (_coaPq.empty())
+		return nullptr;
+
 	auto temp_stack = std::deque<CoaHeapPtr>();
 	
-	while (_coaPq.top().data_size < size) {
+	while (!_coaPq.empty() && _coaPq.top().data_size < size) {
 		temp_stack.push_back(_coaPq.top());
 		_coaPq.pop();
 	}
+	if (_coaPq.empty()) {
+		while (!temp_stack.empty()) {
+			_coaPq.push(temp_stack.back());
+			temp_stack.pop_back();
+		}
+		return nullptr;
+	}
+
 	auto free_block = _coaPq.top();
 	_coaPq.pop();
 	auto free_block_size = free_block.data_size + _coaHeadFootSize;
@@ -216,29 +238,35 @@ void* MemoryAllocator::_allocInCoalesce(std::size_t size) {
 	_assignCoaBlock(alloc_ptr, alloc_block_size, true);
 
 	auto new_empty_ptr = _offset(alloc_ptr, alloc_block_size);
+
 	auto new_empty_block_size = free_block_size - alloc_block_size;
 
-	_assignCoaBlock(new_empty_ptr, new_empty_block_size, false);
+	if (new_empty_block_size > _coaHeadFootSize) {
+		_assignCoaBlock(new_empty_ptr, new_empty_block_size, false);
 
-	auto new_empty_data_size = new_empty_block_size - _coaHeadFootSize;
-	auto new_empty_block = CoaHeapPtr(new_empty_ptr, new_empty_data_size);
+		auto new_empty_data_size = new_empty_block_size - _coaHeadFootSize;
+		auto new_empty_block = CoaHeapPtr(new_empty_ptr, new_empty_data_size);
 
-	_coaPq.push(new_empty_block);
+		_coaPq.push(new_empty_block);
+	}
 
-	return nullptr;
+	auto alloc_data_ptr = _offset(alloc_ptr, _coaHeaderSize);
+
+	return alloc_data_ptr;
 }
-void MemoryAllocator::_freeInCoalesce(void* p) {
-	auto block_size = _readCoaBlockSize(p);
+void MemoryAllocator::_freeInCoalesce(void* ptr) {
+	auto real_ptr = _negoffset(ptr, _coaHeaderSize);
+	auto block_size = _readCoaBlockSize(real_ptr);
 
-	void* new_empty_ptr = p;
+	void* new_empty_ptr = real_ptr;
 	std::size_t new_empty_block_size = block_size;
 
-	if (p != _coalesceBase) {
-		auto block_int = static_cast<uintptr_t*>(p);
+	if (real_ptr != _coalesceBase) {
+		auto block_int = static_cast<uintptr_t*>(real_ptr);
 
 		auto prev_size = block_int[-1];
 		
-		auto prev_ptr = _negoffset(p, prev_size);
+		auto prev_ptr = _negoffset(real_ptr, prev_size);
 		auto prev_busy = _readCoaBlockBusy(prev_ptr);
 
 		if (!prev_busy) {
@@ -246,8 +274,8 @@ void MemoryAllocator::_freeInCoalesce(void* p) {
 			new_empty_block_size += prev_size;
 		}
 	}
-	if (_offset(p, block_size) != _offset(_coalesceBase, _coalesceRegionSize)) {
-		auto next_ptr = _offset(p, block_size);
+	if (_offset(real_ptr, block_size) != _offset(_coalesceBase, _coalesceRegionSize)) {
+		auto next_ptr = _offset(real_ptr, block_size);
 		auto next_size = _readCoaBlockSize(next_ptr);
 		auto next_busy = _readCoaBlockBusy(next_ptr);
 
@@ -270,7 +298,7 @@ void MemoryAllocator::_freeInOS(void* p) {
 std::size_t MemoryAllocator::_detBlockSizeIdx(void* p) const {
 	for (std::size_t i = _fsaLength; i > 0; --i) {
 		if (p >= _fsaBases[i - 1]) {
-			return i;
+			return i - 1;
 		}
 	}
 	return SIZE_MAX;
@@ -303,10 +331,10 @@ bool MemoryAllocator::_readCoaBlockBusy(void* block) const {
 	return static_cast<bool>(blockInt[1]);
 }
 void MemoryAllocator::_assignCoaBlock(void* block, std::size_t size, bool busy) {
-	std::size_t* _blockInt = static_cast<std::size_t*>(_coalesceBase);
+	std::size_t* _blockInt = static_cast<std::size_t*>(block);
 	_blockInt[0] = size; // size
 	_blockInt[1] = static_cast<std::size_t>(busy); // is busy
-	static_cast<std::size_t*>(_offset(_blockInt, _coalesceRegionSize))[0] = size;
+	static_cast<std::size_t*>(_offset(block, size))[-1] = size;
 }
 void* MemoryAllocator::_getCoaBlockDataPtr(void* block) const {
 	return _offset(block, _coaHeaderSize);
