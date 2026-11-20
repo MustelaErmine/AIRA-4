@@ -97,7 +97,6 @@ private:
 	void _assignCoaBlock(void* block, std::size_t size, bool busy);
 	void* _getCoaBlockDataPtr(void* block) const;
 	void* _readEmptyFsaBlockNext(void* block) const;
-	void* _readEmptyFsaBlockPrev(void* block) const;
 	std::size_t _readCoaBlockSize(void* block) const;
 	bool _readCoaBlockBusy(void* block) const;
 
@@ -122,5 +121,7 @@ private:
 
 	bool _isInited = false;
 	bool _isDestroyed = false;
+
+	int _allocated_blocks = 0;
 };
 

@@ -26,8 +26,7 @@ void MemoryAllocator::init(std::size_t initialSize) {
 void MemoryAllocator::destroy() {
 	IF_INITED
 #ifdef _MA_DEBUG
-	assert(_fsaBase == _base);
-	assert(_coalesceBase == _offset(_base, _fsaRegionSize()));
+	assert(_allocated_blocks == 0);
 #endif
 	_deallocInSystem();
 	_isDestroyed = true;
@@ -35,6 +34,7 @@ void MemoryAllocator::destroy() {
 
 void* MemoryAllocator::alloc(std::size_t size) {
 	IF_INITED
+	_allocated_blocks++;
 	if (size <= _fsaSizes[_fsaLength - 1]) {
 		return _allocInFSA(size);
 	}
@@ -45,6 +45,7 @@ void* MemoryAllocator::alloc(std::size_t size) {
 }
 void MemoryAllocator::free(void* p) {
 	IF_INITED
+	_allocated_blocks--;
 	if (p <= (_offset(_fsaBase, _fsaRegionSize()))) {
 		_freeInFSA(p);
 	}
