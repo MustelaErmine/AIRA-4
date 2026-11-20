@@ -39,7 +39,7 @@ void* MemoryAllocator::alloc(std::size_t size) {
 		return _allocInFSA(size);
 	}
 	if (size <= _maxAllocSize) {
-		return _allocInCoalesce(size);
+		return _allocInCoalesce(ALIGN(size));
 	}
 	return _allocInOS(size);
 }
