@@ -8,7 +8,7 @@
 #define _MA_ALIGN 8
 
 #ifdef _MA_DEBUG
-#define IF_INITED if(!_isInited){throw std::exception("MA not destroyed (Debug)");}
+#define IF_INITED if(!_isInited){throw std::exception("MA not inited (Debug)");}
 #else
 #define IF_INITED 
 #endif
