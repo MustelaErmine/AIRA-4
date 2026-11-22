@@ -8,12 +8,12 @@
 #define _MA_ALIGN 8
 
 #ifdef _MA_DEBUG
-#define IF_INITED if(!_isInited){throw std::exception("MA not inited (Debug)");}
+#define IF_INITED do { if(!_isInited){throw std::exception("MA not inited (Debug)");} } while (0)
 #else
 #define IF_INITED 
 #endif
 #ifdef _MA_DEBUG
-#define IF_DESTROYED if(!_isDestroyed){throw std::exception("MA not destroyed (Debug)");}
+#define IF_DESTROYED do { if(!_isDestroyed){throw std::exception("MA not destroyed (Debug)");} } while (0)
 #else
 #define IF_DESTROYED 
 #endif
@@ -44,15 +44,15 @@ public:
 private:
 	static const std::size_t _fsaLength = 6;
 
-	void* _base;
-	void* _fsaBase;
-	void* _coalesceBase;
-	std::size_t _coalesceRegionSize;
+	void* _base = nullptr;
+	void* _fsaBase = nullptr;
+	void* _coalesceBase = nullptr;
+	std::size_t _coalesceRegionSize = 0;
 
-	void* _fsaBases[_fsaLength];
+	void* _fsaBases[_fsaLength] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 
-	void* _fsaCurPtr[_fsaLength];
-	void* _fsaLastInited[_fsaLength];
+	void* _fsaCurPtr[_fsaLength] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+	void* _fsaLastInited[_fsaLength] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 
 
 	class CoaHeapPtr {

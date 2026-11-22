@@ -24,7 +24,7 @@ void MemoryAllocator::init(std::size_t initialSize) {
 	_isInited = true;
 }
 void MemoryAllocator::destroy() {
-	IF_INITED
+	IF_INITED;
 #ifdef _MA_DEBUG
 	assert(_allocated_blocks == 0);
 #endif
@@ -33,7 +33,7 @@ void MemoryAllocator::destroy() {
 }
 
 void* MemoryAllocator::alloc(std::size_t size) {
-	IF_INITED
+	IF_INITED;
 	_allocated_blocks++;
 	if (size <= _fsaSizes[_fsaLength - 1]) {
 		return _allocInFSA(size);
@@ -44,7 +44,7 @@ void* MemoryAllocator::alloc(std::size_t size) {
 	return _allocInOS(size);
 }
 void MemoryAllocator::free(void* p) {
-	IF_INITED
+	IF_INITED;
 	_allocated_blocks--;
 	if (_base <= p && p < (_offset(_fsaBase, _fsaRegionSize()))) {
 		_freeInFSA(p);
@@ -59,7 +59,7 @@ void MemoryAllocator::free(void* p) {
 
 #ifdef _MA_DEBUG
 void MemoryAllocator::dumpStat() const {
-	IF_INITED
+	IF_INITED;
 	std::cout << "--- MemoryAllocator STATS ---" << std::endl;
 
 	std::cout << "-- FSA --" << std::endl;
@@ -110,7 +110,7 @@ void MemoryAllocator::dumpStat() const {
 	std::cout << "--- MemoryAllocator STATS END ---" << std::endl;
 }
 void MemoryAllocator::dumpBlocks() const {
-	IF_INITED
+	IF_INITED;
 	std::cout << "--- MemoryAllocator BLOCKS ---" << std::endl;
 
 	std::cout << "-- FSA --" << std::endl;
