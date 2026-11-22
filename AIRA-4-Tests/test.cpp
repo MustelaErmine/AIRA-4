@@ -13,12 +13,12 @@ TEST(FSA, Simple) {
 	int* pb = static_cast<int*>(ma.alloc(16));
 	int* pc = static_cast<int*>(ma.alloc(16));
 	*pa = 42;
-	*pb = 43;
+	*pb = INT_MAX;
 	*pc = 44;
 
 	// Assert
 	EXPECT_EQ(*pa, 42);
-	EXPECT_EQ(*pb, 43);
+	EXPECT_EQ(*pb, INT_MAX);
 	EXPECT_EQ(*pc, 44);
 
 	//ma.dumpStat();

@@ -46,10 +46,10 @@ void* MemoryAllocator::alloc(std::size_t size) {
 void MemoryAllocator::free(void* p) {
 	IF_INITED
 	_allocated_blocks--;
-	if (p <= (_offset(_fsaBase, _fsaRegionSize()))) {
+	if (_base <= p && p < (_offset(_fsaBase, _fsaRegionSize()))) {
 		_freeInFSA(p);
 	}
-	else if (p <= (_offset(_coalesceBase, _coalesceRegionSize))) {
+	else if (p < (_offset(_fsaBase, _fsaRegionSize())) && p <= (_offset(_coalesceBase, _coalesceRegionSize))) {
 		_freeInCoalesce(p);
 	}
 	else {
@@ -60,7 +60,6 @@ void MemoryAllocator::free(void* p) {
 #ifdef _MA_DEBUG
 void MemoryAllocator::dumpStat() const {
 	IF_INITED
-	// TODO: implement
 	std::cout << "--- MemoryAllocator STATS ---" << std::endl;
 
 	std::cout << "-- FSA --" << std::endl;
@@ -236,7 +235,6 @@ void* MemoryAllocator::_allocInCoalesce(std::size_t size) {
 
 	auto alloc_ptr = free_block.ptr;
 	auto alloc_block_size = size + _coaHeadFootSize;
-	_assignCoaBlock(alloc_ptr, alloc_block_size, true);
 
 	auto new_empty_ptr = _offset(alloc_ptr, alloc_block_size);
 
@@ -250,6 +248,11 @@ void* MemoryAllocator::_allocInCoalesce(std::size_t size) {
 
 		_coaPq.push(new_empty_block);
 	}
+	else {
+		alloc_block_size += new_empty_block_size;
+	}
+
+	_assignCoaBlock(alloc_ptr, alloc_block_size, true);
 
 	auto alloc_data_ptr = _offset(alloc_ptr, _coaHeaderSize);
 
