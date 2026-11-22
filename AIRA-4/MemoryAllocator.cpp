@@ -8,7 +8,7 @@
 #include <set>
 
 MemoryAllocator::~MemoryAllocator() {
-	IF_DESTROYED
+	IF_DESTROYED;
 }
 
 void MemoryAllocator::init() {
@@ -49,7 +49,7 @@ void MemoryAllocator::free(void* p) {
 	if (_base <= p && p < (_offset(_fsaBase, _fsaRegionSize()))) {
 		_freeInFSA(p);
 	}
-	else if (p < (_offset(_fsaBase, _fsaRegionSize())) && p <= (_offset(_coalesceBase, _coalesceRegionSize))) {
+	else if (p > (_offset(_fsaBase, _fsaRegionSize())) && p <= (_offset(_coalesceBase, _coalesceRegionSize))) {
 		_freeInCoalesce(p);
 	}
 	else {
@@ -207,33 +207,32 @@ void MemoryAllocator::_freeInFSA(void* p) {
 	ptr = p;
 }
 void* MemoryAllocator::_allocInCoalesce(std::size_t size) {
-	if (_coaPq.empty())
+	if (_freeListEmpty())
 		return nullptr;
-
-	auto temp_stack = std::deque<CoaHeapPtr>();
 	
-	while (!_coaPq.empty() && _coaPq.top().data_size < size) {
-		temp_stack.push_back(_coaPq.top());
-		_coaPq.pop();
-	}
-	if (_coaPq.empty()) {
-		while (!temp_stack.empty()) {
-			_coaPq.push(temp_stack.back());
-			temp_stack.pop_back();
+	void* best_fit_ptr = nullptr;
+	std::size_t best_fit_idx = -1;
+	std::size_t best_fit_size = LONG_MAX;
+
+	for (std::size_t i = 0; i < _coaFreeListLength; i++) {
+		auto curSize = _readCoaBlockSize(_freeListAt(i));
+		auto curDataSize = curSize - _coaHeadFootSize;
+
+		if (curDataSize >= size && curDataSize < best_fit_size) {
+			best_fit_size = curDataSize;
+			best_fit_ptr = _freeListAt(i);
+			best_fit_idx = i;
 		}
+	}
+
+	if (best_fit_ptr == nullptr) {
 		return nullptr;
 	}
 
-	auto free_block = _coaPq.top();
-	_coaPq.pop();
-	auto free_block_size = free_block.data_size + _coaHeadFootSize;
+	auto free_ptr = best_fit_ptr;
+	auto free_block_size = _readCoaBlockSize(free_ptr);
 
-	while (!temp_stack.empty()) {
-		_coaPq.push(temp_stack.back());
-		temp_stack.pop_back();
-	}
-
-	auto alloc_ptr = free_block.ptr;
+	auto alloc_ptr = best_fit_ptr;
 	auto alloc_block_size = size + _coaHeadFootSize;
 
 	auto new_empty_ptr = _offset(alloc_ptr, alloc_block_size);
@@ -243,13 +242,11 @@ void* MemoryAllocator::_allocInCoalesce(std::size_t size) {
 	if (new_empty_block_size > _coaHeadFootSize) {
 		_assignCoaBlock(new_empty_ptr, new_empty_block_size, false);
 
-		auto new_empty_data_size = new_empty_block_size - _coaHeadFootSize;
-		auto new_empty_block = CoaHeapPtr(new_empty_ptr, new_empty_data_size);
-
-		_coaPq.push(new_empty_block);
+		_freeListAt(best_fit_idx) = new_empty_ptr;
 	}
 	else {
 		alloc_block_size += new_empty_block_size;
+		_freeListRemoveAt(best_fit_idx);
 	}
 
 	_assignCoaBlock(alloc_ptr, alloc_block_size, true);
@@ -265,6 +262,9 @@ void MemoryAllocator::_freeInCoalesce(void* ptr) {
 	void* new_empty_ptr = real_ptr;
 	std::size_t new_empty_block_size = block_size;
 
+	void* prev_remove = nullptr;
+	void* next_remove = nullptr;
+
 	if (real_ptr != _coalesceBase) {
 		auto block_int = static_cast<uintptr_t*>(real_ptr);
 
@@ -276,6 +276,8 @@ void MemoryAllocator::_freeInCoalesce(void* ptr) {
 		if (!prev_busy) {
 			new_empty_ptr = prev_ptr;
 			new_empty_block_size += prev_size;
+
+			prev_remove = prev_ptr;
 		}
 	}
 	if (_offset(real_ptr, block_size) != _offset(_coalesceBase, _coalesceRegionSize)) {
@@ -285,13 +287,25 @@ void MemoryAllocator::_freeInCoalesce(void* ptr) {
 
 		if (!next_busy) {
 			new_empty_block_size += next_size;
+
+			next_remove = next_ptr;
 		}
 	}
 
 	_assignCoaBlock(new_empty_ptr, new_empty_block_size, false);
 	auto new_empty_data_size = new_empty_block_size - _coaHeadFootSize;
 
-	_coaPq.push(CoaHeapPtr(new_empty_ptr, new_empty_data_size));
+	if (prev_remove != nullptr) {
+		auto idx = _freeListFind(prev_remove);
+		_freeListRemoveAt(idx);
+	}
+
+	if (next_remove != nullptr) {
+		auto idx = _freeListFind(next_remove);
+		_freeListRemoveAt(idx);
+	}
+
+	_freeListInsert(new_empty_ptr);
 }
 void* MemoryAllocator::_allocInOS(std::size_t size) {
 	return std::malloc(size);
@@ -352,7 +366,12 @@ void* MemoryAllocator::_readEmptyFsaBlockNext(void* block) const {
 void MemoryAllocator::_assignBasePtrs() {
 	_fsaBase = _base;
 	_coalesceBase = _offset(_base, _fsaRegionSize());
-	_coalesceRegionSize = _curSystemSize - _fsaRegionSize();
+	_coaFreeList = static_cast<void**>(
+		_negoffset(
+			_offset(_base, _curSystemSize), 
+			_coaFreeListSize));
+
+	_coalesceRegionSize = _curSystemSize - _fsaRegionSize() - _coaFreeListSize;
 }
 // empty fsa block: [nextemptyblockptr]/8 ...
 void MemoryAllocator::_initFsaRegion() {
@@ -372,16 +391,14 @@ void MemoryAllocator::_initFsaRegion() {
 }
 // colaesce region: [region size (w/ head & foot)]/8 [is busy]/8 [data...] [region size]/8
 void MemoryAllocator::_initCoalesceRegion() {
-	_coaPq = std::priority_queue< CoaHeapPtr, std::vector<CoaHeapPtr>, CoaHeapPtrLess>();
-
-	//only priority queue (min-heap)
-	//on free - look for neighbours through the pq
-	//on alloic - look for top
+	//only free list
+	//on free - look for neighbours through the list
+	//on alloic - look for top through the list
 
 	auto data_size = _coalesceRegionSize - _coaHeadFootSize;
 
 	_assignCoaBlock(_coalesceBase, _coalesceRegionSize, false);
-	_coaPq.push(CoaHeapPtr(_coalesceBase, data_size));
+	_freeListInsert(_coalesceBase);
 }
 
 void* MemoryAllocator::_offset(void* base, std::size_t size) const {
@@ -392,7 +409,55 @@ void* MemoryAllocator::_negoffset(void* base, std::size_t size) const {
 	return static_cast<void*>(static_cast<uint8_t* > (base)-size);
 }
 
-constexpr std::size_t MemoryAllocator::_fsaRegionSize() const {
+void*& MemoryAllocator::_freeListAt(std::size_t idx) {
+	return _coaFreeList[idx];
+}
+
+bool MemoryAllocator::_freeListEmpty() {
+	return _coaFreeListLength == 0;
+}
+
+void MemoryAllocator::_freeListInsert(void* elem) {
+	if (_coaFreeListLength == _coaFreeListCapacity) {
+		return;
+	}
+	_freeListAt(_coaFreeListLength) = elem;
+	_coaFreeListLength++;
+}
+
+std::size_t MemoryAllocator::_freeListFind(void* elem) {
+	for (std::size_t i = 0; i < _coaFreeListLength; i++) {
+		if (_freeListAt(i) == elem) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+void MemoryAllocator::_freeListInsertAt(void* elem, std::size_t idx) {
+	if (_coaFreeListLength == _coaFreeListCapacity) {
+		return;
+	}
+	for (std::size_t i = _coaFreeListLength; i > idx; i--) {
+		_freeListAt(i) = _freeListAt(i - 1);
+	}
+
+	_freeListAt(idx) = elem;
+	_coaFreeListLength++;
+}
+
+void MemoryAllocator::_freeListRemoveAt(std::size_t idx) {
+	if (_coaFreeListLength <= idx) {
+		return;
+	}
+	for (std::size_t i = idx; i < _coaFreeListLength - 1; i++) {
+		_freeListAt(i) = _freeListAt(i + 1);
+	}
+
+	_coaFreeListLength--;
+}
+
+std::size_t MemoryAllocator::_fsaRegionSize() const {
 	std::size_t out = 0;
 	for (std::size_t i = 0; i < _fsaLength; i++) {
 		out += _fsaBlockAmount * _fsaSizes[i];

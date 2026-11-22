@@ -54,27 +54,10 @@ private:
 	void* _fsaCurPtr[_fsaLength] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 	void* _fsaLastInited[_fsaLength] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 
+	std::size_t _curSystemSize = 0;
 
-	class CoaHeapPtr {
-	public:
-		std::size_t data_size;
-		void* ptr;
-		CoaHeapPtr() = default;
-		CoaHeapPtr(void* ptr, std::size_t data_size) : data_size(data_size), ptr(ptr) {}
-	};
-	class CoaHeapPtrLess
-	{
-	public:
-		bool operator()(CoaHeapPtr right, CoaHeapPtr left) const
-		{
-			return right.data_size > left.data_size;
-		}
-	};
-
-	std::priority_queue < CoaHeapPtr, std::vector<CoaHeapPtr>, CoaHeapPtrLess > _coaPq;
-
-
-	std::size_t _curSystemSize;
+	void** _coaFreeList = nullptr;
+	std::size_t _coaFreeListLength = 0;
 
 	void _allocInSystem(std::size_t size);
 	void _deallocInSystem();
@@ -94,30 +77,41 @@ private:
 	void _initCoalesceRegion();
 
 	void _assignEmptyFsaBlock(void* block, void* next);
-	void _assignCoaBlock(void* block, std::size_t size, bool busy);
-	void* _getCoaBlockDataPtr(void* block) const;
 	void* _readEmptyFsaBlockNext(void* block) const;
+
+	void _assignCoaBlock(void* block, std::size_t size, bool busy);
 	std::size_t _readCoaBlockSize(void* block) const;
 	bool _readCoaBlockBusy(void* block) const;
+	void* _getCoaBlockDataPtr(void* block) const;
 
 	inline uintptr_t _asAddr(void* ptr) const;
 	inline void* _asPtr(uintptr_t addr) const;
 
 	inline void* _offset(void* base, std::size_t size) const;
 	inline void* _negoffset(void* base, std::size_t size) const;
+
+	inline void*& _freeListAt(std::size_t idx);
+	inline bool _freeListEmpty();
+	void _freeListInsert(void* elem);
+	void _freeListInsertAt(void* elem, std::size_t idx);
+	void _freeListRemoveAt(std::size_t idx);
+	std::size_t _freeListFind(void* elem);
 	
 	const std::size_t _initAlloc = 100 * 1024 * 1024; // 100 Mb;
 
 	const std::size_t _fsaSizes[_fsaLength] = { 16, 32, 64, 128, 256, 512 };
 	static const std::size_t _fsaBlockAmount = 128;
 
-	constexpr std::size_t _fsaRegionSize() const;
+	std::size_t _fsaRegionSize() const;
 
-	const std::size_t _maxAllocSize = 10 * 1024 * 1024; // 10 Mb
+	static const std::size_t _maxAllocSize = 10 * 1024 * 1024; // 10 Mb
 
 	static const std::size_t _coaHeaderSize = 16;
 	static const std::size_t _coaFooterSize = 8;
 	static const std::size_t _coaHeadFootSize = _coaFooterSize + _coaHeaderSize;
+
+	static const std::size_t _coaFreeListCapacity = 1024;
+	static const std::size_t _coaFreeListSize = _coaFreeListCapacity * sizeof(void**);
 
 	bool _isInited = false;
 	bool _isDestroyed = false;
